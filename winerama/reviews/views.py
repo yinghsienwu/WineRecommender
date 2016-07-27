@@ -2,7 +2,7 @@ from django.shortcuts import render,get_object_or_404
 from django.http import HttpResponseRedirect
 from django.core.urlresolvers import reverse
 from django.contrib.auth.decorators import login_required
-from  .models import Review,Wine
+from  .models import Review,Wine,Cluster
 from .forms import ReviewForm
 import datetime
 
@@ -23,7 +23,7 @@ def wine_list(request):
     #get all the wines sorted by name and passes it to wine_list.html
     wine_list=Wine.objects.order_by('-name')
     context={'wine_list':wine_list}
-    return render(request,'reviews/wine_list.html')
+    return render(request,'reviews/wine_list.html',context)
 
 def wine_detail(request,wine_id):
     #get a wine from the DB given its ID and renders it using wine_detail.html
@@ -66,4 +66,27 @@ def user_review_list(request,username=None):
 
 @login_required
 def user_recommendation_list(request):
-    return render(request,'reviews/user_recommendation_list.html',{'username':request.user.username})
+    #get this user reviews
+    user_reviews=Review.objects.filter(user_name=request.user.username).prefetch_related('wine')
+    #from the reviews, get a set of wine IDs
+    user_reviews_wine_ids=set(map(lambda x: x.wine.id,user_reviews))
+    
+    #get request user cluster name (just the first one right now)
+    user_cluster_name=\
+        User.objects.get(username=request.user.username).cluster_set.first().name
+
+    #get usernames for other members of the cluster 
+    user_cluster_other_members=\
+        Cluster.objects.get(name=user_cluster_name).users.exclude(username=request.user.username).all()
+    other_members_usernames=set(map(lambda x: x.username, user_cluster_other_members))
+
+    #get reviews by those users, excluding wines reviewed by the request user
+    other_users_reviews=\
+        Review.objects.filter(user_name__in=other_members_usernames).exclude(wine__id__in=user_reviews_wine_ids)
+    other_users_reviews_wine_ids=set(map(lambda x: x.wine.id,other_users_reviews))
+
+    #then get a wine list excluding the previous IDs, order by rating
+    wine_list=sorted(list(Wine.objects.filter(id__in=other_users_reviews_wine_ids)),key=lambda x: x.average_rating,reverse=True)
+
+    return render(request,'reviews/user_recommendation_list.html',{'username':request.user.username,'wine_list':wine_list})
+
